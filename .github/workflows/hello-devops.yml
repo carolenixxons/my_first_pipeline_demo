@@ -13,3 +13,7 @@ jobs:
 
     - name: Show the date
       run: date 
+
+    - name: This step will fail
+      run: exit 1
+      
