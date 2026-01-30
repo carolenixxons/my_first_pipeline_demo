@@ -1,0 +1,36 @@
+# CodeQL configuration file for enhanced security scanning
+name: "Enhanced Security Analysis"
+
+# Disable default queries and use custom ones
+disable-default-queries: false
+
+# Additional query packs to include
+queries:
+  - name: security-extended
+    uses: security-extended  # Include extended security queries
+  - name: security-and-quality
+    uses: security-and-quality  # Include both security and quality queries
+
+# Paths to include in the analysis
+paths:
+  - "**/*.html"     # Include all HTML files
+  - "**/*.js"       # Include all JavaScript files
+  - "**/*.json"     # Include all JSON files
+
+# Paths to exclude from analysis
+paths-ignore:
+  - "**/node_modules/**"  # Exclude node_modules directory
+  - "**/dist/**"          # Exclude build output directory
+  - "**/*.min.js"         # Exclude minified JavaScript files
+  - "**/test/**"          # Exclude test files
+  - "**/tests/**"         # Exclude test directories
+
+# Query filters to customize which issues to report
+query-filters:
+  - exclude:
+      id: js/unused-local-variable  # Exclude unused variable warnings for demo code
+  - include:
+      severity: error               # Always include error-level issues
+  - include:
+      severity: warning             # Always include warning-level issues
+      security-severity: high       # Include high-security warnings

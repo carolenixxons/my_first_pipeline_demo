@@ -1,0 +1,211 @@
+# Name of the GitHub Actions workflow
+name: Code Security and Quality Scan
+
+# Trigger conditions - when this pipeline should run
+on:
+  push:                    # Run on every push to any branch
+    branches: [ main, develop ]  # Only run on main and develop branches
+  pull_request:           # Run on pull requests
+    branches: [ main ]    # Only for PRs targeting main branch
+  schedule:               # Run on a schedule
+    - cron: '0 2 * * 1'   # Run every Monday at 2 AM UTC for regular security checks
+
+# Define the jobs that will run in this workflow
+jobs:
+  # Job 1: Code scanning and security analysis
+  code-scan:
+    name: Security and Quality Scan    # Human-readable name for this job
+    runs-on: ubuntu-latest            # Use the latest Ubuntu runner
+    
+    # Set permissions for the GitHub token
+    permissions:
+      actions: read           # Read access to actions
+      contents: read         # Read access to repository contents
+      security-events: write # Write access to upload security results
+    
+    # Define the steps to execute in this job
+    steps:
+    # Step 1: Download the repository code to the runner
+    - name: Checkout Repository
+      uses: actions/checkout@v4       # Official GitHub action to checkout code
+      with:
+        fetch-depth: 0              # Fetch full history for better analysis
+    
+    # Step 2: Set up Node.js environment for JavaScript/HTML analysis
+    - name: Setup Node.js
+      uses: actions/setup-node@v4     # Official action to setup Node.js
+      with:
+        node-version: '18'          # Use Node.js version 18
+        cache: 'npm'               # Cache npm dependencies for faster builds
+    
+    # Step 3: Install security scanning tools
+    - name: Install Security Tools
+      run: |
+        # Install npm audit for dependency vulnerability scanning
+        npm install -g npm-audit-html
+        # Install HTMLHint for HTML code quality checking
+        npm install -g htmlhint
+        # Install ESLint for JavaScript linting (if JS files exist)
+        npm install -g eslint
+    
+    # Step 4: Run HTML code quality scan
+    - name: HTML Quality Scan
+      run: |
+        # Check if HTML files exist before scanning
+        if find . -name "*.html" -type f | grep -q .; then
+          echo "Running HTML quality scan..."
+          # Scan all HTML files for code quality issues
+          htmlhint "**/*.html" --format json > htmlhint-report.json || true
+          # Display results in readable format
+          htmlhint "**/*.html" || true
+        else
+          echo "No HTML files found to scan"
+        fi
+    
+    # Step 5: Run dependency vulnerability scan
+    - name: Dependency Security Scan
+      run: |
+        # Check if package.json exists
+        if [ -f "package.json" ]; then
+          echo "Running npm security audit..."
+          # Run npm audit and generate HTML report
+          npm audit --audit-level=moderate --json > npm-audit.json || true
+          # Generate human-readable HTML report
+          npm-audit-html --input npm-audit.json --output npm-audit-report.html || true
+        else
+          echo "No package.json found - creating basic one for security scanning"
+          # Create minimal package.json for basic scanning
+          echo '{"name":"security-scan","version":"1.0.0"}' > package.json
+          npm audit --audit-level=moderate || true
+        fi
+    
+    # Step 6: Initialize CodeQL for advanced security analysis
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3    # Official GitHub CodeQL action
+      with:
+        languages: javascript             # Specify languages to analyze
+        config-file: ./.github/codeql-config.yml  # Optional: custom config
+    
+    # Step 7: Build the application (if needed for CodeQL)
+    - name: Build Application
+      run: |
+        # For static HTML sites, no build is typically needed
+        echo "Building application for security analysis..."
+        # If you have a build process, add it here
+        # Example: npm run build
+    
+    # Step 8: Perform CodeQL security analysis
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3   # Run the actual CodeQL analysis
+      with:
+        category: "/language:javascript"     # Categorize results by language
+    
+    # Step 9: Run custom security checks
+    - name: Custom Security Checks
+      run: |
+        echo "Running custom security checks..."
+        # Check for common security issues in HTML files
+        echo "Checking for potential XSS vulnerabilities..."
+        # Look for inline JavaScript that might be vulnerable
+        grep -r "javascript:" . --include="*.html" || echo "No inline JavaScript found"
+        # Check for external script sources
+        grep -r "<script src=" . --include="*.html" || echo "No external scripts found"
+        # Check for form submissions without CSRF protection
+        grep -r "<form" . --include="*.html" || echo "No forms found"
+    
+    # Step 10: Upload security scan results as artifacts
+    - name: Upload Scan Results
+      uses: actions/upload-artifact@v4      # Official action to upload files
+      if: always()                         # Run even if previous steps failed
+      with:
+        name: security-scan-results        # Name of the artifact
+        path: |                           # Files to upload
+          htmlhint-report.json
+          npm-audit.json
+          npm-audit-report.html
+        retention-days: 30                # Keep artifacts for 30 days
+    
+    # Step 11: Comment on PR with scan summary (only for pull requests)
+    - name: Comment PR with Results
+      if: github.event_name == 'pull_request'  # Only run on pull requests
+      uses: actions/github-script@v7           # Official action to run JavaScript
+      with:
+        script: |
+          // Create a comment on the PR with scan results summary
+          const fs = require('fs');
+          let comment = '## 🔍 Security Scan Results\n\n';
+          
+          // Add HTML quality results if file exists
+          if (fs.existsSync('htmlhint-report.json')) {
+            comment += '✅ HTML quality scan completed\n';
+          }
+          
+          // Add dependency scan results if file exists
+          if (fs.existsSync('npm-audit.json')) {
+            comment += '✅ Dependency security scan completed\n';
+          }
+          
+          comment += '\n📊 Detailed results are available in the workflow artifacts.';
+          
+          // Post the comment
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+  # Job 2: Additional quality checks (runs in parallel with code-scan)
+  quality-check:
+    name: Code Quality Analysis        # Human-readable name for this job
+    runs-on: ubuntu-latest            # Use Ubuntu runner
+    
+    steps:
+    # Step 1: Checkout code
+    - name: Checkout Repository
+      uses: actions/checkout@v4       # Download repository code
+    
+    # Step 2: Check file permissions and structure
+    - name: File Security Check
+      run: |
+        echo "Checking file permissions and structure..."
+        # List all files with their permissions
+        find . -type f -exec ls -la {} \; | head -20
+        # Check for executable files that shouldn't be executable
+        find . -type f -executable -name "*.html" -o -name "*.css" -o -name "*.json" | head -10
+        # Check for hidden files that might contain sensitive data
+        find . -name ".*" -type f | grep -v ".git" | head -10
+    
+    # Step 3: Check for sensitive information
+    - name: Secrets Detection
+      run: |
+        echo "Scanning for potential secrets and sensitive information..."
+        # Look for common patterns that might indicate secrets
+        echo "Checking for API keys..."
+        grep -r -i "api[_-]key\|apikey" . --include="*.html" --include="*.js" --include="*.json" || echo "No API keys found"
+        echo "Checking for passwords..."
+        grep -r -i "password\|passwd" . --include="*.html" --include="*.js" --include="*.json" || echo "No password references found"
+        echo "Checking for tokens..."
+        grep -r -i "token\|secret" . --include="*.html" --include="*.js" --include="*.json" || echo "No tokens found"
+    
+    # Step 4: Generate security report summary
+    - name: Generate Security Summary
+      run: |
+        echo "## Security Scan Summary" > security-summary.md
+        echo "- Repository: ${{ github.repository }}" >> security-summary.md
+        echo "- Branch: ${{ github.ref_name }}" >> security-summary.md
+        echo "- Commit: ${{ github.sha }}" >> security-summary.md
+        echo "- Scan Date: $(date)" >> security-summary.md
+        echo "- Workflow: ${{ github.workflow }}" >> security-summary.md
+        echo "" >> security-summary.md
+        echo "### Files Scanned:" >> security-summary.md
+        find . -name "*.html" -o -name "*.js" -o -name "*.css" -o -name "*.json" | wc -l >> security-summary.md
+        cat security-summary.md
+    
+    # Step 5: Upload quality check results
+    - name: Upload Quality Results
+      uses: actions/upload-artifact@v4    # Upload results as artifacts
+      with:
+        name: quality-check-results      # Artifact name
+        path: security-summary.md        # File to upload
+        retention-days: 30              # Keep for 30 days
